@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: financedb
+      POSTGRES_USER: financedb
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-financedb}
+    volumes:
+      - ./Chatbot/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U financedb -d financedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  auth:
+    build: ./Auth-Server
+    ports:
+      - "8000:8000"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      CORS_ORIGINS: http://localhost:8080,http://localhost:3001
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: sqlite:///./data/auth.db
+    volumes:
+      - auth_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  chatbot:
+    build: ./Chatbot
+    ports:
+      - "3001:3001"
+    environment:
+      JWT_SECRET: ${SECRET_KEY}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: financedb
+      DB_USER: financedb
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-financedb}
+      WIDGET_ORIGIN: http://localhost:8080
+      PORT: 3001
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./Nexus-Web:/usr/share/nginx/html
+      - ./Chatbot/finance-chatbot.html:/usr/share/nginx/html/widget/finance-chatbot.html:ro
+    depends_on:
+      - auth
+      - chatbot
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  auth_data:

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sign in — Nexus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #050810;
+      --surface: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.1);
+      --accent: #4f8cff;
+      --text: #e8eaf0;
+      --text-muted: rgba(232,234,240,0.55);
+      --red: #f87171;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%;
+      max-width: 400px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 40px 36px;
+    }
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+    }
+    p.sub { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 28px; }
+    label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 6px; }
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: rgba(0,0,0,0.3);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 0.95rem;
+    }
+    input:focus { outline: none; border-color: var(--accent); }
+    button[type="submit"] {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 500;
+      font-size: 0.95rem;
+      cursor: pointer;
+      margin-top: 8px;
+    }
+    button[type="submit"]:hover { opacity: 0.92; }
+    .error { color: var(--red); font-size: 0.85rem; margin-bottom: 12px; display: none; }
+    .error.visible { display: block; }
+    .foot { margin-top: 24px; text-align: center; font-size: 0.85rem; color: var(--text-muted); }
+    .foot a { color: var(--accent); text-decoration: none; }
+    .hint {
+      margin-top: 20px;
+      padding: 12px;
+      border-radius: 8px;
+      background: rgba(79,140,255,0.08);
+      border: 1px solid rgba(79,140,255,0.2);
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      line-height: 1.5;
+    }
+    .tabs { display: flex; gap: 8px; margin-bottom: 24px; }
+    .tabs button {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text-muted);
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .tabs button.active {
+      background: rgba(79,140,255,0.15);
+      color: var(--text);
+      border-color: var(--accent);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Nexus</h1>
+    <p class="sub">Sign in to your capital dashboard</p>
+
+    <div class="tabs">
+      <button type="button" id="tabLogin" class="active">Sign in</button>
+      <button type="button" id="tabRegister">Register</button>
+    </div>
+
+    <div class="error" id="error"></div>
+
+    <form id="authForm">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required placeholder="alex" />
+
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+      <button type="submit" id="submitBtn">Sign in</button>
+    </form>
+
+    <div class="hint">
+      Demo portfolio is linked to username <strong>alex</strong>. Register or sign in as <strong>alex</strong> to see live portfolio data in the assistant.
+    </div>
+
+    <p class="foot"><a href="/nexus.html">← Back to home</a></p>
+  </div>
+
+  <script src="/shared.js"></script>
+  <script>
+    redirectIfLoggedIn('/app.html');
+
+    let mode = 'login';
+    const tabLogin = document.getElementById('tabLogin');
+    const tabRegister = document.getElementById('tabRegister');
+    const submitBtn = document.getElementById('submitBtn');
+    const errorEl = document.getElementById('error');
+    const form = document.getElementById('authForm');
+
+    function setMode(m) {
+      mode = m;
+      tabLogin.classList.toggle('active', m === 'login');
+      tabRegister.classList.toggle('active', m === 'register');
+      submitBtn.textContent = m === 'login' ? 'Sign in' : 'Create account';
+    }
+
+    tabLogin.addEventListener('click', () => setMode('login'));
+    tabRegister.addEventListener('click', () => setMode('register'));
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      errorEl.classList.remove('visible');
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+
+      try {
+        if (mode === 'register') {
+          await register(username, password);
+        } else {
+          await login(username, password);
+        }
+        window.location.href = '/app.html';
+      } catch (err) {
+        errorEl.textContent = err.message || 'Something went wrong';
+        errorEl.classList.add('visible');
+      }
+    });
+  </script>
+</body>
+</html>

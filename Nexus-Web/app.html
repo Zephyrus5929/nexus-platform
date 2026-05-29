@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard — Nexus</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700&family=DM+Sans:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #050810;
+      --border: rgba(255,255,255,0.08);
+      --accent: #4f8cff;
+      --text: #e8eaf0;
+      --text-muted: rgba(232,234,240,0.5);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh;
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 32px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      font-family: 'Syne', sans-serif;
+      font-weight: 700;
+      font-size: 1.2rem;
+      color: var(--text);
+      text-decoration: none;
+    }
+    .user { font-size: 0.875rem; color: var(--text-muted); }
+    .actions { display: flex; gap: 12px; align-items: center; }
+    button {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 0.875rem;
+    }
+    button:hover { color: var(--text); border-color: rgba(255,255,255,0.2); }
+    main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      gap: 16px;
+    }
+    h1 {
+      font-family: 'Syne', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .widget-wrap {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 24px 64px rgba(0,0,0,0.45);
+    }
+    iframe {
+      display: block;
+      border: none;
+      width: 420px;
+      height: 680px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <a href="/nexus.html" class="logo">Nexus</a>
+    <div class="actions">
+      <span class="user" id="userLabel"></span>
+      <button type="button" id="logoutBtn">Sign out</button>
+    </div>
+  </header>
+  <main>
+    <h1>Finance assistant</h1>
+    <div class="widget-wrap">
+      <iframe id="chatWidget" title="Finance chatbot" src="/widget/finance-chatbot.html"></iframe>
+    </div>
+  </main>
+
+  <script src="/shared.js"></script>
+  <script>
+    if (!isLoggedIn()) {
+      window.location.href = '/login.html';
+    }
+
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+
+    fetch('/api/me', { headers: { Authorization: 'Bearer ' + getToken() } })
+      .then((r) => r.ok ? r.json() : Promise.reject())
+      .then((me) => {
+        document.getElementById('userLabel').textContent = me.username;
+      })
+      .catch(() => logout());
+  </script>
+</body>
+</html>
