@@ -274,7 +274,7 @@
    ================================================================ */
 const _params = new URLSearchParams(window.location.search);
 const CONFIG = {
-  apiBase: window.CHATBOT_API_BASE || 'http://localhost:3001',
+  apiBase: window.CHATBOT_API_BASE || '',  // empty = same origin; nginx proxies /api/chat and /api/portfolio
   authBase: window.AUTH_API_BASE || window.location.origin,
   chatEndpoint: '/api/chat',
   portfolioEndpoint: '/api/portfolio',

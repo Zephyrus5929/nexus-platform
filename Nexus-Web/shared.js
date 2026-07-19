@@ -3,7 +3,7 @@
  */
 const API = {
   auth: '', // same origin; nginx proxies /api/auth/* and /api/me
-  chat: window.CHATBOT_API_BASE || 'http://localhost:3001',
+  // chatbot endpoints (/api/chat, /api/portfolio) are also proxied by nginx
 };
 
 function getToken() {

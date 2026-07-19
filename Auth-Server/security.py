@@ -8,15 +8,15 @@ LOCKOUT_MINUTES = int(os.getenv("LOCKOUT_MINUTES", "15"))
 
 
 def record_failed_login(db: Session, user: User) -> None:
-    attempts = int(user.failed_attempts or 0) + 1
-    user.failed_attempts = str(attempts)
+    attempts = (user.failed_attempts or 0) + 1
+    user.failed_attempts = attempts
     if attempts >= MAX_FAILED_ATTEMPTS:
         user.locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_MINUTES)
     db.commit()
 
 
 def reset_failed_logins(db: Session, user: User) -> None:
-    user.failed_attempts = "0"
+    user.failed_attempts = 0
     user.locked_until = None
     db.commit()
 

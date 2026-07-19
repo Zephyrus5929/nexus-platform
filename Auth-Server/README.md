@@ -8,14 +8,14 @@ A production-ready auth server built with FastAPI, JWT, SQLite, and Redis.
 - bcrypt password hashing
 - SQLite database via SQLAlchemy
 - Redis-backed refresh token storage
-- Rate limiting (20 req/min per IP)
+- Rate limiting (20 req/min per IP, atomic Redis counter via `slowapi`)
 - Brute-force lockout (5 failed attempts → 15 min lockout)
 - User enumeration prevention
 
 ## Prerequisites
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) (recommended)
-- Or: Python 3.12+ and a Redis-compatible server (e.g. [Memurai](https://www.memurai.com/) on Windows)
+- Python 3.12+ and a Redis-compatible server (e.g. [Memurai](https://www.memurai.com/) on Windows)
+- This service is normally run as part of the full stack — see the [root README](../README.md) for `docker compose up`. There is no standalone `docker-compose.yml` in this folder.
 
 ## Setup
 
@@ -35,14 +35,7 @@ Edit `.env` and set your secret key — generate one with:
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-**3. Run**
-
-With Docker (recommended):
-```bash
-docker compose up --build
-```
-
-Without Docker:
+**3. Run standalone (without Docker)**
 ```bash
 pip install -r requirements.txt
 uvicorn main:app --reload

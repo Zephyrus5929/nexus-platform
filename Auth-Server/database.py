@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, DateTime, Boolean
+from sqlalchemy import create_engine, Column, String, Integer, DateTime, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker
 from datetime import datetime
 import os
@@ -21,7 +21,7 @@ class User(Base):
     is_active   = Column(Boolean, default=True)
     created_at  = Column(DateTime, default=datetime.utcnow)
     # Brute-force tracking
-    failed_attempts = Column(String, default="0")   # kept as str for SQLite compat
+    failed_attempts = Column(Integer, default=0)
     locked_until    = Column(DateTime, nullable=True)
 
 

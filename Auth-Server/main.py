@@ -1,18 +1,22 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 import bcrypt
 from jose import JWTError, jwt
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from database import User, get_db, create_tables
 from redis_store import (
     store_refresh_token, refresh_token_exists,
-    revoke_refresh_token, check_rate_limit,
+    revoke_refresh_token,
 )
 from security import record_failed_login, reset_failed_logins, is_locked_out
 import uuid
@@ -25,7 +29,12 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
 REFRESH_TOKEN_EXPIRE_DAYS   = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Auth Server")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    create_tables()
+    yield
+
+app = FastAPI(title="Auth Server", lifespan=lifespan)
 
 _cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:8080")
 app.add_middleware(
@@ -36,12 +45,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Rate limiting (Redis-backed, atomic — replaces hand-rolled counter) ───────
+RATE_LIMIT = os.getenv("RATE_LIMIT_PER_MINUTE", "20") + "/minute"
+limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
-
-
-@app.on_event("startup")
-def startup():
-    create_tables()
 
 
 # ── Password helpers ──────────────────────────────────────────────────────────
@@ -93,13 +103,6 @@ def decode_token(token: str, expected_type: str) -> str:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 
-# ── Rate-limit dependency ─────────────────────────────────────────────────────
-def rate_limit(request: Request):
-    ip = request.client.host
-    if not check_rate_limit(ip):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests")
-
-
 # ── Current-user dependency ───────────────────────────────────────────────────
 def get_current_user(
     token: str = Depends(oauth2_scheme),
@@ -113,8 +116,9 @@ def get_current_user(
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
-@app.post("/auth/register", status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limit)])
-def register(body: UserRegister, db: Session = Depends(get_db)):
+@app.post("/auth/register", status_code=status.HTTP_201_CREATED)
+@limiter.limit(RATE_LIMIT)
+def register(request: Request, body: UserRegister, db: Session = Depends(get_db)):
     if db.query(User).filter(User.username == body.username).first():
         raise HTTPException(status_code=400, detail="Username already taken")
     user = User(
@@ -126,8 +130,9 @@ def register(body: UserRegister, db: Session = Depends(get_db)):
     return {"message": "User created"}
 
 
-@app.post("/auth/login", response_model=TokenPair, dependencies=[Depends(rate_limit)])
-def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+@app.post("/auth/login", response_model=TokenPair)
+@limiter.limit(RATE_LIMIT)
+def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user = db.query(User).filter(User.username == form.username).first()
 
     invalid = HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
@@ -144,8 +149,9 @@ def login(form: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get
     return create_token_pair(user.username)
 
 
-@app.post("/auth/refresh", response_model=TokenPair, dependencies=[Depends(rate_limit)])
-def refresh(body: RefreshRequest):
+@app.post("/auth/refresh", response_model=TokenPair)
+@limiter.limit(RATE_LIMIT)
+def refresh(request: Request, body: RefreshRequest):
     if not refresh_token_exists(body.refresh_token):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unknown refresh token")
     username = decode_token(body.refresh_token, "refresh")
@@ -157,6 +163,11 @@ def refresh(body: RefreshRequest):
 def logout(body: RefreshRequest):
     revoke_refresh_token(body.refresh_token)
     return {"message": "Logged out"}
+
+
+@app.get("/health")
+def health():
+    return {"ok": True}
 
 
 @app.get("/me")

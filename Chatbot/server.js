@@ -3,6 +3,7 @@
  */
 
 require('dotenv').config();
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
@@ -35,8 +36,12 @@ const db = new Pool({
 // ── Resolve Auth username (JWT sub) → Postgres user UUID ─────────────────
 async function resolvePostgresUserId(username) {
   const { rows } = await db.query(
+    // Primary match: email prefix (e.g. 'alex' matches 'alex@example.com')
+    // Fallback: case-insensitive exact match on display_name
+    // Note: display_name ILIKE $1 is an exact case-insensitive compare (no wildcards),
+    // so 'Alex Johnson' will NOT match 'alex'. The email-prefix path is the reliable one.
     `SELECT id, email, display_name FROM users
-     WHERE split_part(email, '@', 1) = $1 OR display_name ILIKE $1
+     WHERE split_part(email, '@', 1) = $1 OR lower(display_name) = lower($1)
      LIMIT 1`,
     [username]
   );
@@ -77,22 +82,6 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Dev-only token endpoint (legacy widget flow)
-if (process.env.NODE_ENV === 'development') {
-  app.post('/api/auth/token', async (req, res) => {
-    const { clientId } = req.body || {};
-    if (clientId !== process.env.WIDGET_CLIENT_ID) {
-      return res.status(401).json({ error: 'Unknown client' });
-    }
-    const token = jwt.sign(
-      { sub: 'alex', type: 'access' },
-      JWT_SECRET,
-      { expiresIn: '1h' }
-    );
-    res.json({ access_token: token, user_id: 'alex', expires_in: 3600 });
-  });
-}
-
 app.get('/health', async (_req, res) => {
   try {
     await db.query('SELECT 1');
@@ -105,31 +94,18 @@ app.get('/health', async (_req, res) => {
 // ── Portfolio ──────────────────────────────────────────────────────────────
 app.get('/api/portfolio', requireAuth, async (req, res) => {
   try {
-    const userId = req.user.userId;
-
-    const summary = await db.query(
-      `SELECT total_value, return_pct, daily_pnl, cash_balance, ytd_return_pct, beta
-       FROM portfolio_summary WHERE user_id = $1`,
-      [userId]
-    );
-    if (!summary.rows.length) {
+    const rows = await fetchPortfolioRows(req.user.userId);
+    if (!rows) {
       return res.status(404).json({ error: 'No portfolio data for user' });
     }
 
-    const holdings = await db.query(
-      `SELECT ticker, company_name, current_value, daily_change_pct
-       FROM holdings WHERE user_id = $1
-       ORDER BY current_value DESC NULLS LAST LIMIT 10`,
-      [userId]
-    );
-
-    const result = summary.rows[0];
+    const { summary, holdings } = rows;
     res.json({
-      totalValue: Number(result.total_value),
-      returnPct: Number(result.return_pct),
-      pnlToday: Number(result.daily_pnl),
-      cash: Number(result.cash_balance),
-      holdings: holdings.rows.map((h) => ({
+      totalValue: Number(summary.total_value),
+      returnPct: Number(summary.return_pct),
+      pnlToday: Number(summary.daily_pnl),
+      cash: Number(summary.cash_balance),
+      holdings: holdings.slice(0, 10).map((h) => ({
         ticker: h.ticker,
         name: h.company_name,
         value: '$' + Number(h.current_value).toLocaleString(),
@@ -158,7 +134,7 @@ app.post('/api/chat', requireAuth, async (req, res) => {
     return res.status(503).json({ error: 'GEMINI_API_KEY is not configured' });
   }
 
-  const convId = conversationId || require('crypto').randomUUID();
+  const convId = conversationId || crypto.randomUUID();
 
   try {
     const histRows = await db.query(
@@ -205,26 +181,36 @@ async function generateGeminiReply(systemPrompt, priorMessages, userMessage) {
   return result.response.text();
 }
 
-async function getPortfolioContext(userId) {
+// Single source of truth for portfolio_summary + holdings, shared by
+// /api/portfolio and the chat context builder below (was two near-duplicate
+// queries before).
+async function fetchPortfolioRows(userId) {
   const summary = await db.query(
     `SELECT total_value, return_pct, daily_pnl, cash_balance, ytd_return_pct, beta
      FROM portfolio_summary WHERE user_id = $1`,
     [userId]
   );
+  if (!summary.rows.length) return null;
+
   const holdings = await db.query(
-    `SELECT ticker, shares, current_value, daily_change_pct, sector
-     FROM holdings WHERE user_id = $1 ORDER BY current_value DESC`,
+    `SELECT ticker, company_name, shares, current_value, daily_change_pct, sector
+     FROM holdings WHERE user_id = $1
+     ORDER BY current_value DESC NULLS LAST`,
     [userId]
   );
 
-  if (!summary.rows.length) {
+  return { summary: summary.rows[0], holdings: holdings.rows };
+}
+
+async function getPortfolioContext(userId) {
+  const rows = await fetchPortfolioRows(userId);
+  if (!rows) {
     throw new Error('No portfolio summary');
   }
 
-  const s = summary.rows[0];
-  const rows = holdings.rows;
+  const { summary: s, holdings } = rows;
   const totalValue = Number(s.total_value);
-  const techValue = rows
+  const techValue = holdings
     .filter((h) => h.sector === 'Technology')
     .reduce((sum, h) => sum + Number(h.current_value), 0);
 
@@ -236,15 +222,14 @@ async function getPortfolioContext(userId) {
     beta: Number(s.beta) || 1,
     techWeight: totalValue > 0 ? techValue / totalValue : 0,
     ytdReturn: Number(s.ytd_return_pct) || 0,
-    benchmarkYtd: 9.8,
-    holdings: rows.map((h) => ({
+    benchmarkYtd: 9.8, // TODO: source from a real market-data feed
+    holdings: holdings.map((h) => ({
       ticker: h.ticker,
       shares: Number(h.shares),
       value: Number(h.current_value),
       changePct: Number(h.daily_change_pct),
     })),
-    unrealizedLosses: 1840,
-    openTaxYear: new Date().getFullYear(),
+    unrealizedLosses: 1840, // TODO: compute from avg_cost_basis vs current_price
   };
 }
 

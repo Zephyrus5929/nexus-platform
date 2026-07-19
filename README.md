@@ -67,7 +67,7 @@ Root [`.env.example`](.env.example):
 
 See project READMEs for standalone use:
 
-- [Auth-Server/README.md](Auth-Server/README.md) — `docker compose` in `Auth-Server/`
+- [Auth-Server/README.md](Auth-Server/README.md) — `uvicorn main:app --reload` (no standalone compose file; needs a local Redis)
 - [Chatbot/README.md](Chatbot/README.md) — Node server + widget
 
 ## Security

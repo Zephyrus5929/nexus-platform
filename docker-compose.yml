@@ -72,8 +72,10 @@ services:
       - ./Nexus-Web:/usr/share/nginx/html
       - ./Chatbot/finance-chatbot.html:/usr/share/nginx/html/widget/finance-chatbot.html:ro
     depends_on:
-      - auth
-      - chatbot
+      auth:
+        condition: service_healthy
+      chatbot:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
