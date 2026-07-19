@@ -2,7 +2,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Depends, HTTPException, Request, status
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -21,12 +21,42 @@ from redis_store import (
 from security import record_failed_login, reset_failed_logins, is_locked_out
 import uuid
 import os
+from starlette import status
 
 # ── Config (all values come from .env) ────────────────────────────────────────
-SECRET_KEY = os.environ["SECRET_KEY"]
+SECRET_KEY = os.environ.get("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 ALGORITHM  = os.getenv("ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
 REFRESH_TOKEN_EXPIRE_DAYS   = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
+RATE_LIMIT = os.getenv("RATE_LIMIT_PER_MINUTE", "20") + "/minute"
+
+# ── Token helpers ─────────────────────────────────────────────────────────────
+def create_token(data: dict, expires_delta: timedelta) -> str:
+    payload = {**data, "exp": datetime.utcnow() + expires_delta, "jti": str(uuid.uuid4())}
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+def create_token_pair(username: str) -> TokenPair:
+    access = create_token(
+        {"sub": username, "type": "access"},
+        timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    refresh = create_token(
+        {"sub": username, "type": "refresh"},
+        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+    )
+    store_refresh_token(refresh)
+    return TokenPair(access_token=access, refresh_token=refresh)
+
+def decode_token(token: str, expected_type: str) -> str:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != expected_type:
+            raise ValueError
+        return payload["sub"]
+    except (JWTError, ValueError, KeyError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
 # ── App ───────────────────────────────────────────────────────────────────────
 @asynccontextmanager
@@ -46,7 +76,6 @@ app.add_middleware(
 )
 
 # ── Rate limiting (Redis-backed, atomic — replaces hand-rolled counter) ───────
-RATE_LIMIT = os.getenv("RATE_LIMIT_PER_MINUTE", "20") + "/minute"
 limiter = Limiter(key_func=get_remote_address, storage_uri=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)

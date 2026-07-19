@@ -268,6 +268,7 @@
   <div class="toast" id="toast"></div>
 </div>
 
+<script src="/shared.js"></script>
 <script>
 /* ================================================================
    CONFIGURATION — update these for your environment
@@ -340,27 +341,18 @@ async function authenticate() {
     return true;
   }
 
-  const token = localStorage.getItem('access_token');
-  if (!token) {
-    setStatus(false, 'Sign in required');
-    showToast('Sign in at ' + CONFIG.loginPage);
-    return false;
-  }
-
+  // Use shared.js authFetch which handles token refresh automatically
   try {
-    const meRes = await fetch(CONFIG.authBase + CONFIG.meEndpoint, {
-      headers: { Authorization: 'Bearer ' + token },
-    });
-    if (!meRes.ok) throw new Error('Session expired');
-    const me = await meRes.json();
-    state.sessionToken = token;
+    const res = await authFetch(CONFIG.authBase + CONFIG.meEndpoint);
+    if (!res.ok) throw new Error('Session expired');
+    const me = await res.json();
+    state.sessionToken = getToken();
     state.userId = me.username;
     state.displayName = me.username.charAt(0).toUpperCase() + me.username.slice(1);
     setStatus(true, 'Connected · ' + me.username);
     return true;
   } catch (err) {
-    localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
+    clearTokens();
     setStatus(false, 'Session expired');
     showToast('Please sign in again.');
     return false;
@@ -376,9 +368,7 @@ async function fetchPortfolio() {
     return MOCK.portfolio;
   }
 
-  const res = await fetch(CONFIG.apiBase + CONFIG.portfolioEndpoint, {
-    headers: { Authorization: 'Bearer ' + state.sessionToken },
-  });
+  const res = await authFetch(CONFIG.apiBase + CONFIG.portfolioEndpoint);
   if (!res.ok) throw new Error('Portfolio fetch failed');
   return await res.json();
 }
@@ -403,21 +393,18 @@ async function callChatAPI(userMessage) {
   }
 
   // Real call — your server proxies to Gemini and injects DB context
-  const res = await fetch(CONFIG.apiBase + CONFIG.chatEndpoint, {
+  const res = await authFetch(CONFIG.apiBase + CONFIG.chatEndpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: 'Bearer ' + state.sessionToken,
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message: userMessage,
       conversationId: state.conversationId,
-      userId: state.userId,
-      // Your backend appends portfolio context before forwarding to Gemini
     }),
   });
   if (!res.ok) throw new Error('Chat API error');
-  return await res.json(); // { text, card? }
+  const data = await res.json();
+  if (data.conversationId) state.conversationId = data.conversationId;
+  return { text: data.text, card: data.card };
 }
 
 function buildMockResponse(msg) {

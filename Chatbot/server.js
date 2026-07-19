@@ -24,6 +24,10 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
 const gemini = GEMINI_API_KEY ? new GoogleGenerativeAI(GEMINI_API_KEY) : null;
 
+if (!GEMINI_API_KEY) {
+  console.warn('GEMINI_API_KEY not set - chat functionality will be unavailable');
+}
+
 const db = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432', 10),
@@ -82,108 +86,10 @@ async function requireAuth(req, res, next) {
   }
 }
 
-app.get('/health', async (_req, res) => {
-  try {
-    await db.query('SELECT 1');
-    res.json({ ok: true });
-  } catch {
-    res.status(503).json({ ok: false, error: 'database unavailable' });
-  }
-});
-
-// ── Portfolio ──────────────────────────────────────────────────────────────
-app.get('/api/portfolio', requireAuth, async (req, res) => {
-  try {
-    const rows = await fetchPortfolioRows(req.user.userId);
-    if (!rows) {
-      return res.status(404).json({ error: 'No portfolio data for user' });
-    }
-
-    const { summary, holdings } = rows;
-    res.json({
-      totalValue: Number(summary.total_value),
-      returnPct: Number(summary.return_pct),
-      pnlToday: Number(summary.daily_pnl),
-      cash: Number(summary.cash_balance),
-      holdings: holdings.slice(0, 10).map((h) => ({
-        ticker: h.ticker,
-        name: h.company_name,
-        value: '$' + Number(h.current_value).toLocaleString(),
-        change:
-          (h.daily_change_pct >= 0 ? '▲ ' : '▼ ') +
-          Math.abs(Number(h.daily_change_pct)).toFixed(1) +
-          '%',
-        up: Number(h.daily_change_pct) >= 0,
-      })),
-    });
-  } catch (err) {
-    console.error('Portfolio fetch error:', err);
-    res.status(500).json({ error: 'Failed to load portfolio' });
-  }
-});
-
-// ── Chat ───────────────────────────────────────────────────────────────────
-app.post('/api/chat', requireAuth, async (req, res) => {
-  const { message, conversationId } = req.body;
-  const userId = req.user.userId;
-
-  if (!message || typeof message !== 'string') {
-    return res.status(400).json({ error: 'message is required' });
-  }
-  if (!gemini) {
-    return res.status(503).json({ error: 'GEMINI_API_KEY is not configured' });
-  }
-
-  const convId = conversationId || crypto.randomUUID();
-
-  try {
-    const histRows = await db.query(
-      `SELECT role, content FROM chat_messages
-       WHERE user_id = $1 AND conversation_id = $2
-       ORDER BY created_at ASC LIMIT 40`,
-      [userId, convId]
-    );
-    const priorMessages = histRows.rows.map((r) => ({ role: r.role, content: r.content }));
-
-    const portfolioContext = await getPortfolioContext(userId);
-    const systemPrompt = buildSystemPrompt(portfolioContext, req.user);
-
-    const assistantText = await generateGeminiReply(systemPrompt, priorMessages, message);
-
-    await db.query(
-      `INSERT INTO chat_messages (user_id, conversation_id, role, content)
-       VALUES ($1, $2, 'user', $3), ($1, $2, 'assistant', $4)`,
-      [userId, convId, message, assistantText]
-    );
-
-    res.json({ text: assistantText, conversationId: convId });
-  } catch (err) {
-    console.error('Chat error:', err);
-    res.status(500).json({ error: 'Chat request failed' });
-  }
-});
-
-// ── Helpers ────────────────────────────────────────────────────────────────
-
-async function generateGeminiReply(systemPrompt, priorMessages, userMessage) {
-  const model = gemini.getGenerativeModel({
-    model: GEMINI_MODEL,
-    systemInstruction: systemPrompt,
-  });
-
-  const history = priorMessages.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: m.content }],
-  }));
-
-  const chat = model.startChat({ history });
-  const result = await chat.sendMessage(userMessage);
-  return result.response.text();
-}
+// ── Helpers (must be defined before routes that use them) ──────────────────
 
 // Single source of truth for portfolio_summary + holdings, shared by
-// /api/portfolio and the chat context builder below (was two near-duplicate
-// queries before).
+// /api/portfolio and the chat context builder below.
 async function fetchPortfolioRows(userId) {
   const summary = await db.query(
     `SELECT total_value, return_pct, daily_pnl, cash_balance, ytd_return_pct, beta
@@ -270,6 +176,103 @@ GUIDELINES
 - Never fabricate data not present in the portfolio summary above.
 - Keep responses under 120 words unless a detailed analysis is requested.`;
 }
+
+async function generateGeminiReply(systemPrompt, priorMessages, userMessage) {
+  const model = gemini.getGenerativeModel({
+    model: GEMINI_MODEL,
+    systemInstruction: systemPrompt,
+  });
+
+  const history = priorMessages.map((m) => ({
+    role: m.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: m.content }],
+  }));
+
+  const chat = model.startChat({ history });
+  const result = await chat.sendMessage(userMessage);
+  return result.response.text();
+}
+
+app.get('/health', async (_req, res) => {
+  try {
+    await db.query('SELECT 1');
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ ok: false, error: 'database unavailable' });
+  }
+});
+
+// ── Portfolio ──────────────────────────────────────────────────────────────
+app.get('/api/portfolio', requireAuth, async (req, res) => {
+  try {
+    const rows = await fetchPortfolioRows(req.user.userId);
+    if (!rows) {
+      return res.status(404).json({ error: 'No portfolio data for user' });
+    }
+
+    const { summary, holdings } = rows;
+    res.json({
+      totalValue: Number(summary.total_value),
+      returnPct: Number(summary.return_pct),
+      pnlToday: Number(summary.daily_pnl),
+      cash: Number(summary.cash_balance),
+      holdings: holdings.slice(0, 10).map((h) => ({
+        ticker: h.ticker,
+        name: h.company_name,
+        value: '$' + Number(h.current_value).toLocaleString(),
+        change:
+          (h.daily_change_pct >= 0 ? '▲ ' : '▼ ') +
+          Math.abs(Number(h.daily_change_pct)).toFixed(1) +
+          '%',
+        up: Number(h.daily_change_pct) >= 0,
+      })),
+    });
+  } catch (err) {
+    console.error('Portfolio fetch error:', err);
+    res.status(500).json({ error: 'Failed to load portfolio' });
+  }
+});
+
+// ── Chat ───────────────────────────────────────────────────────────────────
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const { message, conversationId } = req.body;
+  const userId = req.user.userId;
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'message is required' });
+  }
+  if (!gemini) {
+    return res.status(503).json({ error: 'GEMINI_API_KEY is not configured' });
+  }
+
+  const convId = conversationId || crypto.randomUUID();
+
+  try {
+    const histRows = await db.query(
+      `SELECT role, content FROM chat_messages
+       WHERE user_id = $1 AND conversation_id = $2
+       ORDER BY created_at ASC LIMIT 40`,
+      [userId, convId]
+    );
+    const priorMessages = histRows.rows.map((r) => ({ role: r.role, content: r.content }));
+
+    const portfolioContext = await getPortfolioContext(userId);
+    const systemPrompt = buildSystemPrompt(portfolioContext, req.user);
+
+    const assistantText = await generateGeminiReply(systemPrompt, priorMessages, message);
+
+    await db.query(
+      `INSERT INTO chat_messages (user_id, conversation_id, role, content)
+       VALUES ($1, $2, 'user', $3), ($1, $2, 'assistant', $4)`,
+      [userId, convId, message, assistantText]
+    );
+
+    res.json({ text: assistantText, conversationId: convId });
+  } catch (err) {
+    console.error('Chat error:', err);
+    res.status(500).json({ error: 'Chat request failed' });
+  }
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Finance chatbot server running on port ${PORT}`));
