@@ -32,32 +32,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "15")
 REFRESH_TOKEN_EXPIRE_DAYS   = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "7"))
 RATE_LIMIT = os.getenv("RATE_LIMIT_PER_MINUTE", "20") + "/minute"
 
-# ── Token helpers ─────────────────────────────────────────────────────────────
-def create_token(data: dict, expires_delta: timedelta) -> str:
-    payload = {**data, "exp": datetime.utcnow() + expires_delta, "jti": str(uuid.uuid4())}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-
-def create_token_pair(username: str) -> TokenPair:
-    access = create_token(
-        {"sub": username, "type": "access"},
-        timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    refresh = create_token(
-        {"sub": username, "type": "refresh"},
-        timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-    )
-    store_refresh_token(refresh)
-    return TokenPair(access_token=access, refresh_token=refresh)
-
-def decode_token(token: str, expected_type: str) -> str:
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        if payload.get("type") != expected_type:
-            raise ValueError
-        return payload["sub"]
-    except (JWTError, ValueError, KeyError):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-
 # ── App ───────────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -172,6 +146,8 @@ def login(request: Request, form: OAuth2PasswordRequestForm = Depends(), db: Ses
         raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account temporarily locked")
     if not verify_password(form.password, user.hashed_password):
         record_failed_login(db, user)
+        if is_locked_out(user):
+            raise HTTPException(status_code=status.HTTP_423_LOCKED, detail="Account temporarily locked")
         raise invalid
 
     reset_failed_logins(db, user)

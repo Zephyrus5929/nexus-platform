@@ -101,7 +101,9 @@
 
     document.getElementById('logoutBtn').addEventListener('click', logout);
 
-    fetch('/api/me', { headers: { Authorization: 'Bearer ' + getToken() } })
+    // Use authFetch so an expiring access token is refreshed automatically;
+    // a raw fetch would hard-fail and log the user out after ~15 minutes.
+    authFetch('/api/me')
       .then((r) => r.ok ? r.json() : Promise.reject())
       .then((me) => {
         document.getElementById('userLabel').textContent = me.username;

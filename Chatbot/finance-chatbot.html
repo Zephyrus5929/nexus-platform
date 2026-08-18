@@ -355,6 +355,12 @@ async function authenticate() {
     clearTokens();
     setStatus(false, 'Session expired');
     showToast('Please sign in again.');
+    // Navigate the top-level window (this widget may run inside an iframe).
+    setTimeout(() => {
+      const target = CONFIG.loginPage || '/login.html';
+      if (window.top && window.top !== window) window.top.location.href = target;
+      else window.location.href = target;
+    }, 1500);
     return false;
   }
 }
@@ -440,10 +446,10 @@ function addMessage(role, text, time, card) {
   if (card && card.length) {
     cardHTML = '<div class="card-bubble">' + card.map(r => `
       <div class="card-row">
-        <div><div class="card-ticker">${r.ticker}</div><div class="card-name">${r.name}</div></div>
+        <div><div class="card-ticker">${escHtml(r.ticker)}</div><div class="card-name">${escHtml(r.name)}</div></div>
         <div style="text-align:right">
-          <div class="card-price">${r.value}</div>
-          <div class="port-change ${r.up ? 'up' : 'down'}" style="font-size:11px">${r.change}</div>
+          <div class="card-price">${escHtml(r.value)}</div>
+          <div class="port-change ${r.up ? 'up' : 'down'}" style="font-size:11px">${escHtml(r.change)}</div>
         </div>
       </div>`).join('') + '</div>';
   }
@@ -503,7 +509,7 @@ function showToast(msg) {
 }
 
 function escHtml(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 function mdToHtml(s) {
@@ -523,7 +529,7 @@ function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
    ================================================================ */
 function sendQuick(btn, text) {
   btn.disabled = true;
-  handleInput(text);
+  handleInput(text).finally(() => { btn.disabled = false; });
 }
 
 function handleSend() {

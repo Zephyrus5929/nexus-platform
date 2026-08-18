@@ -32,7 +32,11 @@ function isLoggedIn() {
 
 function logout() {
   clearTokens();
-  window.location.href = '/login.html';
+  // Navigate the top-level window so this works even when the page is
+  // embedded in an iframe (e.g. the chatbot widget inside the dashboard).
+  const target = '/login.html';
+  if (window.top && window.top !== window) window.top.location.href = target;
+  else window.location.href = target;
 }
 
 async function login(username, password) {
@@ -76,12 +80,27 @@ function redirectIfLoggedIn(target) {
 }
 
 /**
+ * Decode the payload segment of a JWT.
+ * JWT payloads use base64url (alphabet includes '-' and '_'); atob() only
+ * accepts standard base64, so normalize and re-pad before decoding.
+ */
+function decodeJwtPayloadPart(token) {
+  let b64 = token.split('.')[1];
+  // base64url -> base64
+  b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+  // restore missing padding
+  const pad = b64.length % 4;
+  if (pad) b64 += '='.repeat(4 - pad);
+  return JSON.parse(atob(b64));
+}
+
+/**
  * Parse JWT payload (without verification) to get expiry.
  * Returns expiry timestamp in milliseconds, or null if invalid.
  */
 function getTokenExpiry(token) {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
+    const payload = decodeJwtPayloadPart(token);
     return payload.exp * 1000; // exp is in seconds
   } catch {
     return null;

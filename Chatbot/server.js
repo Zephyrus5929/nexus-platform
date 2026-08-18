@@ -41,9 +41,9 @@ const db = new Pool({
 async function resolvePostgresUserId(username) {
   const { rows } = await db.query(
     // Primary match: email prefix (e.g. 'alex' matches 'alex@example.com')
-    // Fallback: case-insensitive exact match on display_name
-    // Note: display_name ILIKE $1 is an exact case-insensitive compare (no wildcards),
-    // so 'Alex Johnson' will NOT match 'alex'. The email-prefix path is the reliable one.
+    // Fallback: exact case-insensitive match on display_name (never ILIKE —
+    // ILIKE would treat '_' and '%' in the username as wildcards and could
+    // match a display_name like "Alexandra" for the username "alex").
     `SELECT id, email, display_name FROM users
      WHERE split_part(email, '@', 1) = $1 OR lower(display_name) = lower($1)
      LIMIT 1`,
@@ -99,7 +99,8 @@ async function fetchPortfolioRows(userId) {
   if (!summary.rows.length) return null;
 
   const holdings = await db.query(
-    `SELECT ticker, company_name, shares, current_value, daily_change_pct, sector
+    `SELECT ticker, company_name, shares, current_value, daily_change_pct, sector,
+            avg_cost_basis, current_price
      FROM holdings WHERE user_id = $1
      ORDER BY current_value DESC NULLS LAST`,
     [userId]
@@ -120,6 +121,15 @@ async function getPortfolioContext(userId) {
     .filter((h) => h.sector === 'Technology')
     .reduce((sum, h) => sum + Number(h.current_value), 0);
 
+  // Sum of unrealized losses across positions where cost basis > current price.
+  // Computed from real DB data instead of a hardcoded value.
+  const unrealizedLosses = holdings.reduce((sum, h) => {
+    const cost = Number(h.avg_cost_basis);
+    const price = Number(h.current_price);
+    const loss = (cost - price) * Number(h.shares);
+    return sum + (loss > 0 ? loss : 0);
+  }, 0);
+
   return {
     totalValue,
     returnPct: Number(s.return_pct),
@@ -128,14 +138,14 @@ async function getPortfolioContext(userId) {
     beta: Number(s.beta) || 1,
     techWeight: totalValue > 0 ? techValue / totalValue : 0,
     ytdReturn: Number(s.ytd_return_pct) || 0,
-    benchmarkYtd: 9.8, // TODO: source from a real market-data feed
+    benchmarkYtd: Number(process.env.BENCHMARK_YTD) || 9.8, // TODO: source from a real market-data feed
     holdings: holdings.map((h) => ({
       ticker: h.ticker,
       shares: Number(h.shares),
       value: Number(h.current_value),
       changePct: Number(h.daily_change_pct),
     })),
-    unrealizedLosses: 1840, // TODO: compute from avg_cost_basis vs current_price
+    unrealizedLosses,
   };
 }
 
@@ -249,9 +259,13 @@ app.post('/api/chat', requireAuth, async (req, res) => {
 
   try {
     const histRows = await db.query(
-      `SELECT role, content FROM chat_messages
-       WHERE user_id = $1 AND conversation_id = $2
-       ORDER BY created_at ASC LIMIT 40`,
+      // Most recent 40 messages in chronological order (LIMIT applies after
+      // the inner DESC ordering, so we get the newest messages, not the oldest).
+      `SELECT role, content FROM (
+         SELECT role, content, created_at FROM chat_messages
+         WHERE user_id = $1 AND conversation_id = $2
+         ORDER BY created_at DESC LIMIT 40
+       ) recent ORDER BY created_at ASC`,
       [userId, convId]
     );
     const priorMessages = histRows.rows.map((r) => ({ role: r.role, content: r.content }));
